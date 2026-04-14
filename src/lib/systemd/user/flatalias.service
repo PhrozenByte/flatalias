@@ -1,0 +1,9 @@
+[Unit]
+Description=Run Flatalias to update cached command line aliases of Flatpaks
+
+[Service]
+Type=oneshot
+ExecStart=@bindir@/flatalias %S/flatalias.profile
+
+[Install]
+WantedBy=default.target

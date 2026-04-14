@@ -1,0 +1,173 @@
+#!/bin/bash
+# Flatalias
+# Generate short, convenient shell aliases for Flatpak applications.
+#
+# Flatalias scans installed Flatpaks, derives suitable aliases from their
+# default commands, and makes them available in your shell environment.
+#
+# Copyright (C) 2026  Daniel Rudolf <https://www.daniel-rudolf.de>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, version 3 of the License only.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# License: GNU General Public License <https://opensource.org/license/gpl-3-0>
+# SPDX-License-Identifier: GPL-3.0-only
+
+set -eu -o pipefail
+export LC_ALL=C.UTF-8
+
+declare -r VERSION="1.0.0"
+declare -r BUILD="20260414"
+
+declare -r APP_NAME="$(basename "${BASH_SOURCE[0]}")"
+declare -r APP_SCRIPT="$(realpath "${BASH_SOURCE[0]}" 2> /dev/null ||:)"
+declare -r LIB_DIR="$(realpath "$(dirname "$APP_SCRIPT")/../lib/flatalias/" 2> /dev/null ||:)"
+
+[ -n "$APP_SCRIPT" ] || { echo "Failed to discover Flatalias' script" >&2; exit 1; }
+[ -n "$LIB_DIR" ] || { echo "Failed to discover Flatalias' lib dir" >&2; exit 1; }
+[ -x "$(type -p flatpak)" ] || { echo "Missing script dependency: flatpak" >&2; exit 1; }
+[ -x "$(type -p awk)" ] || { echo "Missing script dependency: awk" >&2; exit 1; }
+[ -x "$(type -p fzf)" ] || { echo "Missing script dependency: fzf" >&2; exit 1; }
+
+[ -n "${HOME:-}" ] || export HOME="$(CDPATH= cd ~ && pwd)"
+[ -n "${XDG_CONFIG_HOME:-}" ] || export XDG_CONFIG_HOME="$HOME/.config"
+[ -n "${XDG_STATE_HOME:-}" ] || export XDG_STATE_HOME="$HOME/.local/state"
+
+QUIET=
+FLATALIAS_FILE=
+
+while (( $# > 0 )); do
+    if [ "$1" == "--help" ]; then
+        echo "Usage:"
+        echo "  $APP_NAME [-q|--quiet] [FLATALIAS_FILE]"
+        echo
+        echo "Generate short, convenient shell aliases for Flatpak applications."
+        echo "Flatalias scans installed Flatpaks, derives suitable aliases from their"
+        echo "default commands, and makes them available in your shell environment."
+        echo
+        echo "Arguments:"
+        echo "  FLATALIAS_FILE  write cached Flatpak aliases to this file, or pass '-' to"
+        echo "                  print to stdout; default: '\$XDG_STATE_HOME/flatalias.profile'"
+        echo
+        echo "Application options:"
+        echo "  -q, --quiet     suppress Flatalias' logging"
+        echo
+        echo "Help options:"
+        echo "      --help      display this help and exit"
+        echo "      --version   output version information and exit"
+        echo
+        echo "Visit us on GitHub: <https://github.com/PhrozenByte/flatalias>"
+        echo "Made with ♥ by Daniel Rudolf <https://www.daniel-rudolf.de/>"
+        exit 0
+    elif [ "$1" == "--version" ]; then
+        echo "Flatalias $VERSION ($BUILD)"
+        echo "Copyright (C) 2026  Daniel Rudolf <https://www.daniel-rudolf.de/>"
+        echo
+        echo "This program is free software: you can redistribute it and/or modify"
+        echo "it under the terms of the GNU General Public License as published by"
+        echo "the Free Software Foundation, version 3 of the License only."
+        echo
+        echo "This program is distributed in the hope that it will be useful,"
+        echo "but WITHOUT ANY WARRANTY; without even the implied warranty of"
+        echo "MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the"
+        echo "GNU General Public License for more details."
+        echo
+        echo "You should have received a copy of the GNU General Public License"
+        echo "along with this program.  If not, see <https://www.gnu.org/licenses/>."
+        echo
+        echo "Visit us on GitHub: <https://github.com/PhrozenByte/flatalias>"
+        echo "Made with ♥ by Daniel Rudolf <https://www.daniel-rudolf.de/>"
+        exit 0
+    elif [ "$1" == "-q" ] || [ "$1" == "--quiet" ]; then
+        QUIET=y
+    elif [ -z "$FLATALIAS_FILE" ]; then
+        FLATALIAS_FILE="$1"
+    else
+        echo "Unknown option: $1" >&2
+        exit 1
+    fi
+    shift
+done
+
+[ -z "$QUIET" ] || exec 2> /dev/null
+
+FLATALIAS_FILE="${FLATALIAS_FILE:-$XDG_STATE_HOME/flatalias.profile}"
+if [ "$FLATALIAS_FILE" != "-" ]; then
+    mkdir -m 700 -p "$(dirname "$FLATALIAS_FILE")" \
+        || { echo "Failed to write Flatalias file ${FLATALIAS_FILE@Q}: Invalid path" >&2; exit 1; }
+    [ ! -e "$FLATALIAS_FILE" ] && [ -w "$(dirname "$FLATALIAS_FILE")" ] || [ -w "$FLATALIAS_FILE" ] \
+        || { echo "Failed to write Flatalias file ${FLATALIAS_FILE@Q}: Permission denied" >&2; exit 1; }
+
+    exec > "$FLATALIAS_FILE"
+fi
+
+read_inifile() {
+    awk -F= -v section="$1" -v field="$2" '
+        /^\[.+\]/ { found=0 }
+        $0 ~ "^\\[(" section ")\\]" { found=1 }
+        found && $1 == field { print $2; exit }
+    '
+}
+
+load_flatalias_list() {
+    [ -f "$1" ] || return 0
+
+    local LINE LINE_NUM=0
+    while IFS= read -r LINE; do
+        ((++LINE_NUM))
+        [ -n "$LINE" ] && [ "${LINE:0:1}" != "#" ] || continue
+        [[ "$LINE" =~ ^([a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+\.[a-zA-Z0-9_-]+)=(.*)$ ]] \
+            || { echo "Invalid Flatpak alias definition in ${1@Q} on line $LINE_NUM: $LINE" >&2; continue; }
+        APP_ALIASES["${BASH_REMATCH[1]}"]="${BASH_REMATCH[3]:--}"
+    done < "$1"
+}
+
+flatpak_aliases() {
+    local -A APP_ALIASES=()
+    load_flatalias_list "$LIB_DIR/flatalias.list"
+    load_flatalias_list "/etc/flatalias/flatalias.list"
+    load_flatalias_list "${XDG_CONFIG_HOME:-$HOME/.config}/flatalias/flatalias.list"
+
+    local APP_ID APP_METADATA APP_ALIAS APP_COMMAND _
+    while IFS=$'\t' read -r APP_ID _; do
+        APP_ALIAS="${APP_ALIASES["$APP_ID"]:-}"
+        if [ -z "$APP_ALIAS" ]; then
+            APP_METADATA="$(flatpak info --show-metadata "$APP_ID" 2> /dev/null)"
+            [ -n "$APP_METADATA" ] || { echo "Unable to read metadata of Flatpak ${APP_ID@Q}" >&2; continue; }
+
+            APP_ALIAS="$(read_inifile "Application|Extra" "x-command-alias" <<< "$APP_METADATA")"
+            if [ -z "$APP_ALIAS" ]; then
+                APP_ALIAS="$(basename "$(read_inifile "Application" "command" <<< "$APP_METADATA")")"
+                [ -n "$APP_ALIAS" ] || { echo "Unable to guess alias for Flatpak ${APP_ID@Q}:" \
+                    "Flatpak specifies no command to run" >&2; continue; }
+                [ -n "$(fzf -x -i --filter="${APP_ALIAS//[^a-zA-Z0-9]/}" <<< "$APP_ID")" ] \
+                    || { echo "Unable to guess alias for Flatpak ${APP_ID@Q}:" \
+                        "Command \`$APP_ALIAS\` doesn't match Flatpak ID" >&2; continue; }
+            fi
+        fi
+
+        [ "$APP_ALIAS" != "-" ] || { echo "Skipping Flatpak ${APP_ID@Q}"; continue; }
+        [ -z "$(type -t "$APP_ALIAS")" ] || { echo "Conflicting alias for Flatpak ${APP_ID@Q}:" \
+            "$(type "$APP_ALIAS")" >&2; continue; }
+
+        APP_COMMAND="$(type -p "$APP_ID")"
+        [ -x "$APP_COMMAND" ] || { echo "No exported binary for Flatpak ${APP_ID@Q} found" >&2; continue; }
+
+        printf '+ alias %q=%q\n' "$APP_ALIAS" "$APP_COMMAND" >&2
+        printf 'alias %q=%q\n' "$APP_ALIAS" "$APP_COMMAND"
+    done < <(flatpak list --app --columns=application)
+}
+
+echo "# This file was generated by \`$APP_SCRIPT\` on $(date -R)"
+echo "# DO NOT EDIT THIS FILE, Flatalias will regenerate it periodically"
+echo
+flatpak_aliases
