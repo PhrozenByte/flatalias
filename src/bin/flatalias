@@ -38,8 +38,10 @@ declare -r LIB_DIR="$(realpath -- "$(dirname -- "$APP_SCRIPT")/../lib/flatalias/
 [ -x "$(type -p awk)" ] || { echo "Missing script dependency: awk" >&2; exit 1; }
 [ -x "$(type -p fzf)" ] || { echo "Missing script dependency: fzf" >&2; exit 1; }
 
+[ -n "${PATH:-}" ] || export PATH="/usr/local/bin:/usr/bin:/bin"
 [ -n "${HOME:-}" ] || export HOME="$(CDPATH= cd ~ && pwd)"
 [ -n "${XDG_CONFIG_HOME:-}" ] || export XDG_CONFIG_HOME="$HOME/.config"
+[ -n "${XDG_DATA_HOME:-}" ] || export XDG_DATA_HOME="$HOME/.local/share"
 [ -n "${XDG_STATE_HOME:-}" ] || export XDG_STATE_HOME="$HOME/.local/state"
 
 QUIET=
@@ -99,6 +101,11 @@ while (( $# > 0 )); do
 done
 
 [ -z "$QUIET" ] || exec 2> /dev/null
+
+[[ ":$PATH:" == *:"$XDG_DATA_HOME/flatpak/exports/bin":* ]] || [ ! -d "$XDG_DATA_HOME/flatpak/exports/bin" ] \
+    || PATH+=":$XDG_DATA_HOME/flatpak/exports/bin"
+[[ ":$PATH:" == *:"/var/lib/flatpak/exports/bin":* ]] || [ ! -d /var/lib/flatpak/exports/bin ] \
+    || PATH+=":/var/lib/flatpak/exports/bin"
 
 FLATALIAS_FILE="${FLATALIAS_FILE:-$XDG_STATE_HOME/flatalias.profile}"
 if [ "$FLATALIAS_FILE" != "-" ]; then
