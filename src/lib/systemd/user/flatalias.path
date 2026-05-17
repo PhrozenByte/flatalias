@@ -6,4 +6,4 @@ PathChanged=/var/lib/flatpak/exports/bin
 PathChanged=%D/flatpak/exports/bin
 
 [Install]
-WantedBy=default.target
+WantedBy=paths.target

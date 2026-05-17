@@ -1,5 +1,6 @@
 [Unit]
 Description=Run Flatalias to update cached command line aliases of Flatpaks
+After=default.target
 
 [Service]
 Type=oneshot
