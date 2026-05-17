@@ -28,9 +28,9 @@ export LC_ALL=C.UTF-8
 declare -r VERSION="1.0.0"
 declare -r BUILD="20260414"
 
-declare -r APP_NAME="$(basename "${BASH_SOURCE[0]}")"
-declare -r APP_SCRIPT="$(realpath "${BASH_SOURCE[0]}" 2> /dev/null ||:)"
-declare -r LIB_DIR="$(realpath "$(dirname "$APP_SCRIPT")/../lib/flatalias/" 2> /dev/null ||:)"
+declare -r APP_NAME="$(basename -- "${BASH_SOURCE[0]}")"
+declare -r APP_SCRIPT="$(realpath -- "${BASH_SOURCE[0]}" 2> /dev/null ||:)"
+declare -r LIB_DIR="$(realpath -- "$(dirname -- "$APP_SCRIPT")/../lib/flatalias/" 2> /dev/null ||:)"
 
 [ -n "$APP_SCRIPT" ] || { echo "Failed to discover Flatalias' script" >&2; exit 1; }
 [ -n "$LIB_DIR" ] || { echo "Failed to discover Flatalias' lib dir" >&2; exit 1; }
@@ -102,9 +102,9 @@ done
 
 FLATALIAS_FILE="${FLATALIAS_FILE:-$XDG_STATE_HOME/flatalias.profile}"
 if [ "$FLATALIAS_FILE" != "-" ]; then
-    mkdir -m 700 -p "$(dirname "$FLATALIAS_FILE")" \
+    mkdir -m 700 -p "$(dirname -- "$FLATALIAS_FILE")" \
         || { echo "Failed to write Flatalias file ${FLATALIAS_FILE@Q}: Invalid path" >&2; exit 1; }
-    [ ! -e "$FLATALIAS_FILE" ] && [ -w "$(dirname "$FLATALIAS_FILE")" ] || [ -w "$FLATALIAS_FILE" ] \
+    [ ! -e "$FLATALIAS_FILE" ] && [ -w "$(dirname -- "$FLATALIAS_FILE")" ] || [ -w "$FLATALIAS_FILE" ] \
         || { echo "Failed to write Flatalias file ${FLATALIAS_FILE@Q}: Permission denied" >&2; exit 1; }
 
     exec > "$FLATALIAS_FILE"
@@ -135,18 +135,18 @@ flatpak_aliases() {
     local -A APP_ALIASES=()
     load_flatalias_list "$LIB_DIR/flatalias.list"
     load_flatalias_list "/etc/flatalias/flatalias.list"
-    load_flatalias_list "${XDG_CONFIG_HOME:-$HOME/.config}/flatalias/flatalias.list"
+    load_flatalias_list "$XDG_CONFIG_HOME/flatalias/flatalias.list"
 
     local APP_ID APP_METADATA APP_ALIAS APP_COMMAND _
     while IFS=$'\t' read -r APP_ID _; do
         APP_ALIAS="${APP_ALIASES["$APP_ID"]:-}"
         if [ -z "$APP_ALIAS" ]; then
-            APP_METADATA="$(flatpak info --show-metadata "$APP_ID" 2> /dev/null)"
+            APP_METADATA="$(flatpak info --show-metadata "$APP_ID" 2> /dev/null ||:)"
             [ -n "$APP_METADATA" ] || { echo "Unable to read metadata of Flatpak ${APP_ID@Q}" >&2; continue; }
 
             APP_ALIAS="$(read_inifile "Application|Extra" "x-command-alias" <<< "$APP_METADATA")"
             if [ -z "$APP_ALIAS" ]; then
-                APP_ALIAS="$(basename "$(read_inifile "Application" "command" <<< "$APP_METADATA")")"
+                APP_ALIAS="$(basename -- "$(read_inifile "Application" "command" <<< "$APP_METADATA")")"
                 [ -n "$APP_ALIAS" ] || { echo "Unable to guess alias for Flatpak ${APP_ID@Q}:" \
                     "Flatpak specifies no command to run" >&2; continue; }
                 [ -n "$(fzf -x -i --filter="${APP_ALIAS//[^a-zA-Z0-9]/}" <<< "$APP_ID")" ] \
@@ -159,7 +159,7 @@ flatpak_aliases() {
         [ -z "$(type -t "$APP_ALIAS")" ] || { echo "Conflicting alias for Flatpak ${APP_ID@Q}:" \
             "$(type "$APP_ALIAS")" >&2; continue; }
 
-        APP_COMMAND="$(type -p "$APP_ID")"
+        APP_COMMAND="$(type -P "$APP_ID" ||:)"
         [ -x "$APP_COMMAND" ] || { echo "No exported binary for Flatpak ${APP_ID@Q} found" >&2; continue; }
 
         printf '+ alias %q=%q\n' "$APP_ALIAS" "$APP_COMMAND" >&2
